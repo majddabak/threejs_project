@@ -89,6 +89,7 @@ export function simulateWithDrag3D(options = {}) {
     g = DEFAULTS.g
   } = options;
 
+
   // convert angles
   const elev = elevDeg * Math.PI / 180;
   const azim = azimDeg * Math.PI / 180;
@@ -149,7 +150,7 @@ export function simulateNoDrag3D(options = {}) {
     v0 = 50,
     elevDeg = 45,
     azimDeg = 0,
-    dt = 0.01,
+    dt = 0.0001,
     tMax = 120,
     g = DEFAULTS.g
   } = options;

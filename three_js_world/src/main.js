@@ -1,90 +1,78 @@
 import * as THREE from "three";
-import { PointerLockControls } from "three/examples/jsm/controls/PointerLockControls.js";
+import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import './style.css';
 import { simulateWithDrag3D, simulateNoDrag3D } from './physics.js';
 
-// === عناصر التحكم والإحصائيات ===
+// عناصر التحكم
 const airResistance = document.getElementById("airResistance");
-const airResistanceValue = document.getElementById("airResistanceValue");
+const launchBtn = document.getElementById("launch");
 const thrustControl = document.getElementById("thrustControl");
 const thrustValue = document.getElementById("thrustValue");
 const massInput = document.getElementById("mass");
 const angleControl = document.getElementById("angleControl");
-const angleValue = document.getElementById("angleValue");
+const angleValue = document.getElementById('angleValue');
+const phangle = document.getElementById("phAngle");
+const phangleValue = document.getElementById('phvalue');
 
-const airResistanceStat = document.querySelector("#airResistanceStat p#value");
-const thrustStat = document.querySelector("#Thrust p#value");
-const massStat = document.querySelector("#massStat p#value");
-const angleStat = document.querySelector("#angleStat p#value");
+// عناصر الإحصائيات الحية
+const xEl = document.querySelector("#x p#value");
+const yEl = document.querySelector("#y p#value");
+const zEl = document.querySelector("#z p#value");
+const velocityEl = document.querySelector("#velocity p#value");
+const yMaxEl = document.querySelector("#y-max p#value");
+const thrustEl = document.querySelector("#Thrust p#value");
+const angleStatEl = document.querySelector("#angleStat p#value");
+const phangleStatEl = document.querySelector("#phangleStat p#value");
+const airResistanceEl = document.querySelector("#airResistanceStat p#value");
+const massEl = document.querySelector("#massStat p#value");
+const currentStateEl = document.querySelector("#current-state p#value");
 
 // تحديث عناصر التحكم
-airResistance.addEventListener("input", () => {
-  airResistanceStat.textContent = airResistance.value;
+thrustControl.addEventListener("input", () => { 
+  thrustValue.textContent = thrustControl.value; 
+  if(thrustEl) thrustEl.textContent = thrustControl.value;
 });
-
-thrustControl.addEventListener("input", () => {
-  thrustValue.textContent = thrustControl.value;
-  thrustStat.textContent = `${thrustControl.value} (متر/ثانية)`;
-});
-
-massInput.addEventListener("input", () => {
-  massStat.textContent = `${massInput.value} كغ`;
-});
-
 angleControl.addEventListener("input", () => {
-  angleValue.textContent = angleControl.value;
-  angleStat.textContent = angleControl.value;
+  if(angleStatEl) {
+    angleStatEl.textContent = angleControl.value;
+    angleValue.textContent = angleControl.value;
+  }
+});
+airResistance.addEventListener("input", () => {
+  if(airResistanceEl) airResistanceEl.textContent = airResistance.checked ? "1" : "0";
+});
+massInput.addEventListener("input", () => {
+  if(massEl) massEl.textContent = massInput.value;
+});
+phangle.addEventListener("input", () => {
+  phangleValue.textContent = phangle.value;
+  if(phangleStatEl) phangleStatEl.textContent = phangle.value;
 });
 
-// ===================== Three.js =====================
 let scene, camera, renderer, controls;
-let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false;
-const clock = new THREE.Clock();
+let shellModel;
+let shellPath = [];
+let currentStep = 0;
+let isLaunched = false;
+let smoothFactor = 0.1;
+let maxHeight = 0;
 
 function init() {
   scene = new THREE.Scene();
 
-  // الكاميرا
-  camera = new THREE.PerspectiveCamera(
-    75,
-    window.innerWidth / window.innerHeight,
-    1,
-    100000
-  );
-  camera.position.set(0, 50, 50); // وضع الكاميرا خلف القذيفة قليلاً
+  camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 1, 100000);
+  camera.position.set(0, 20, 50);
 
-  // Renderer
   renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.setPixelRatio(window.devicePixelRatio);
   document.body.appendChild(renderer.domElement);
 
-  // PointerLockControls مع زر L
-  controls = new PointerLockControls(camera, document.body);
-  window.addEventListener('keydown', (e) => {
-    if (e.code === 'KeyL') controls.lock();
-  });
-
-  // Keyboard events
-  const onKeyDown = e => {
-    switch(e.code){
-      case 'ArrowUp': case 'KeyW': moveForward = true; break;
-      case 'ArrowLeft': case 'KeyA': moveLeft = true; break;
-      case 'ArrowDown': case 'KeyS': moveBackward = true; break;
-      case 'ArrowRight': case 'KeyD': moveRight = true; break;
-    }
-  };
-  const onKeyUp = e => {
-    switch(e.code){
-      case 'ArrowUp': case 'KeyW': moveForward = false; break;
-      case 'ArrowLeft': case 'KeyA': moveLeft = false; break;
-      case 'ArrowDown': case 'KeyS': moveBackward = false; break;
-      case 'ArrowRight': case 'KeyD': moveRight = false; break;
-    }
-  };
-  window.addEventListener('keydown', onKeyDown);
-  window.addEventListener('keyup', onKeyUp);
+  controls = new OrbitControls(camera, renderer.domElement);
+  controls.enablePan = false;
+  controls.enableZoom = true;
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.05;
 
   const loader = new THREE.TextureLoader();
 
@@ -117,29 +105,73 @@ function init() {
   const light = new THREE.DirectionalLight(0xffffff, 1);
   light.position.set(5000, 10000, 5000);
   scene.add(light);
-
   const ambient = new THREE.AmbientLight(0xffffff, 0.4);
   scene.add(ambient);
 
-  // === تحميل نموذج القذيفة GLTF أمام الكاميرا مباشرة ===
+  // تحميل القذيفة
   const gltfLoader = new GLTFLoader();
   gltfLoader.load(
     '/models/scene.gltf',
     (gltf) => {
-      const shell = gltf.scene;
-      shell.scale.set(5, 5, 5);
-      shell.position.set(camera.position.x, camera.position.y - 10, camera.position.z - 20); // أمام الكاميرا
-      shell.traverse((child) => {
-        if (child.isMesh && child.material) {
-          child.material.map = loader.load('/difuze/Material.013_metallicRoughness.png'); // تعديل Texture إذا أردت
-          child.material.needsUpdate = true;
-        }
-      });
-      scene.add(shell);
+      shellModel = gltf.scene;
+      shellModel.scale.set(15,15,15);
+      shellModel.position.set(0,5,0);
+      scene.add(shellModel);
     },
-    (xhr) => { console.log((xhr.loaded / xhr.total * 100) + '% تم تحميل القذيفة'); },
-    (error) => { console.error('خطأ في تحميل القذيفة:', error); }
+    undefined,
+    (err) => { console.error("Error loading shell:", err); }
   );
+
+  // 🌳 إضافة مكعبات صغيرة عشوائية لتزيين البيئة
+  const colors = [0x8B4513, 0x228B22, 0x556B2F, 0x6B8E23, 0x2E8B57]; // ألوان مختلفة للأشجار/الصخور
+  const cubeCount = 500; // عدد أكبر
+  for (let i = 0; i < cubeCount; i++) {
+    const size = Math.random() * 150 + 5; // أحجام صغيرة
+    const cubeGeometry = new THREE.BoxGeometry(size, size, size);
+    const cubeMaterial = new THREE.MeshStandardMaterial({ color: colors[Math.floor(Math.random() * colors.length)] });
+    const cube = new THREE.Mesh(cubeGeometry, cubeMaterial);
+
+    cube.position.set(
+      (Math.random() - 0.5) * skyboxSize * 0.8, 
+      size / 2, 
+      (Math.random() - 0.5) * skyboxSize * 0.8
+    );
+
+    scene.add(cube);
+  }
+
+  // إطلاق القذيفة
+  launchBtn.addEventListener("click", () => {
+    let result = airResistance.checked
+      ? simulateWithDrag3D({
+          v0: Number(thrustControl.value),
+          elevDeg: Number(angleControl.value),
+          azimDeg: Number(phangle.value+90),
+          m: Number(massInput.value),
+          dt: 0.01
+        }).traj
+      : simulateNoDrag3D({
+          v0: Number(thrustControl.value),
+          elevDeg: Number(angleControl.value),
+          azimDeg: Number(phangle.value+90),
+          m: Number(massInput.value),
+          dt: 0.01
+        }).traj;
+
+    if(result && result.length > 0){
+      shellPath = result;
+      currentStep = 0;
+      isLaunched = true;
+      maxHeight = 0;
+
+      // تدوير القذيفة 90° مع عقارب الساعة
+      if(shellModel){
+        shellModel.rotation.y = -Math.PI / 2;
+      }
+    } else {
+      console.error("خطأ: المسار فارغ!");
+    }
+  });
 
   animate();
 }
@@ -147,31 +179,63 @@ function init() {
 function animate() {
   requestAnimationFrame(animate);
 
-  if (controls.isLocked) {
-    const delta = clock.getDelta();
-    const speed = 300;
+  if(shellModel && shellPath.length > 0 && currentStep < shellPath.length){
+    const pos = shellPath[currentStep];
+    const nextPos = shellPath[currentStep + 1] || pos;
 
-    const direction = new THREE.Vector3();
-    if (moveForward) direction.z -= 1;
-    if (moveBackward) direction.z += 1;
-    if (moveLeft) direction.x -= 1;
-    if (moveRight) direction.x += 1;
-    direction.normalize();
+    shellModel.position.set(pos.x, pos.y, pos.z);
 
-    const moveX = direction.x * speed * delta;
-    const moveZ = direction.z * speed * delta;
+    const velocityVec = new THREE.Vector3(nextPos.x - pos.x, nextPos.y - pos.y, nextPos.z - pos.z);
+    const speed = velocityVec.length() / 0.01;
 
-    controls.moveRight(moveX);
-    controls.moveForward(moveZ);
+    if(velocityVec.length() > 0){
+      const targetQuaternion = new THREE.Quaternion();
+      targetQuaternion.setFromUnitVectors(new THREE.Vector3(0,0,1), velocityVec.clone().normalize());
+
+      const yawQuaternion = new THREE.Quaternion();
+      yawQuaternion.setFromAxisAngle(new THREE.Vector3(0,1,0), -Math.PI/2);
+
+      targetQuaternion.multiply(yawQuaternion);
+      shellModel.quaternion.slerp(targetQuaternion, smoothFactor);
+
+      const offsetDistance = 50;
+      const offsetHeight = 20;
+      const behind = velocityVec.clone().normalize().multiplyScalar(-offsetDistance);
+
+      const targetCamPos = new THREE.Vector3(
+        pos.x + behind.x,
+        pos.y + offsetHeight,
+        pos.z + behind.z
+      );
+
+      camera.position.lerp(targetCamPos, smoothFactor);
+      camera.lookAt(shellModel.position);
+    }
+
+    if(xEl) xEl.textContent = pos.x.toFixed(2);
+    if(yEl) yEl.textContent = pos.y.toFixed(2);
+    if(zEl) zEl.textContent = pos.z.toFixed(2);
+    if(velocityEl) velocityEl.textContent = speed.toFixed(2);
+
+    maxHeight = Math.max(maxHeight, pos.y);
+    if(yMaxEl) yMaxEl.textContent = maxHeight.toFixed(2);
+
+    if(currentStateEl) currentStateEl.textContent = "في الجو";
+
+    currentStep++;
+  } else if(shellPath.length > 0 && currentStep >= shellPath.length){
+    if(currentStateEl) currentStateEl.textContent = "هبوط";
+  } else {
+    if(currentStateEl) currentStateEl.textContent = "سكون";
   }
 
   renderer.render(scene, camera);
 }
 
-init();
-
 window.addEventListener("resize", () => {
-  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.aspect = window.innerWidth/window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
+
+init();
